@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生產管理表</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f4f6f8;color:#222}
+.container{max-width:900px;margin:auto;padding:18px}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+h1{font-size:24px;margin:0 0 6px}.date{color:#666;font-size:14px}
+.card{background:white;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px #0000000d}
+.form-grid{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:12px}
+label{display:block;font-size:13px;color:#666;margin-bottom:6px}
+input{width:100%;height:46px;border:1px solid #d5d9df;border-radius:9px;padding:0 12px;font-size:16px}
+input:focus{outline:2px solid #9db5ff;border-color:#668cff}
+button{height:44px;border:0;border-radius:9px;padding:0 18px;font-size:15px;font-weight:bold;cursor:pointer}
+.primary{background:#456fe8;color:white}.secondary{background:#eef1f5;color:#333}
+.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.preview{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.preview div{background:#f7f8fa;border-radius:9px;padding:11px}
+.preview span{display:block;color:#777;font-size:12px}.preview b{font-size:20px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:620px}
+th,td{padding:13px 10px;border-bottom:1px solid #e5e7eb;text-align:left}
+th{font-size:13px;color:#666}td{text-align:left}
+.num{text-align:right}
+.good{color:#15945b;font-weight:bold}.ng{color:#d84b4b;font-weight:bold}.remain{font-weight:bold}
+.progress{height:7px;background:#e5e7eb;border-radius:20px;overflow:hidden;min-width:80px}
+.bar{height:100%;background:#456fe8}
+.message{font-size:13px;margin-top:10px;color:#555}
+.empty{text-align:center;color:#888;padding:28px}
+@media(max-width:650px){
+ .container{padding:12px}
+ .form-grid{grid-template-columns:1fr 1fr}
+ .header{align-items:flex-start}
+ h1{font-size:21px}
+}
+@media(max-width:430px){
+ .form-grid{grid-template-columns:1fr}
+ .preview{grid-template-columns:1fr 1fr}
+ .card{padding:14px}
+ button{width:100%}
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>生產管理表</h1>
+      <div class="date" id="today"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">今日輸入</h3>
+    <form id="form">
+      <div class="form-grid">
+        <div>
+          <label>料號</label>
+          <input id="part" type="text" required placeholder="例如 OS51B00272">
+        </div>
+        <div>
+          <label>今日良品數</label>
+          <input id="good" type="number" min="0" step="1" value="0" required>
+        </div>
+        <div>
+          <label>今日 NG 數（可不填）</label>
+          <input id="ng" type="number" min="0" step="1" placeholder="不填＝維持原NG">
+        </div>
+      </div>
+
+      <div class="preview">
+        <div><span>累計已完成</span><b id="previewGood">0</b></div>
+        <div><span>累計 NG</span><b id="previewNg">0</b></div>
+        <div><span>剩餘</span><b id="previewRemain">0</b></div>
+        <div><span>完成率</span><b id="previewRate">0%</b></div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" type="submit">送出今日數量</button>
+        <button class="secondary" type="button" id="clear">清除</button>
+      </div>
+      <div class="message" id="message"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">目前累計生產狀況</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>料號</th>
+            <th class="num">總數</th>
+            <th class="num">已完成</th>
+            <th class="num">剩餘</th>
+            <th class="num">NG</th>
+            <th>進度</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty">尚未建立資料</div>
+  </div>
+
+  <div class="card" style="font-size:13px;color:#666">
+    <b style="color:#333">每日操作方式：</b>
+    每天只需要輸入「料號＋今日良品數」。NG 不填就維持原數；總數固定沿用原設定。若當天有新增 NG，再填入今日 NG 數即可。系統會自動累加已完成與 NG，並重新計算剩餘數。<br><br>
+    <b style="color:#333">計算方式：</b>
+    剩餘 = 總數 − 累計已完成 − 累計 NG
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const fmt = n => Number(n).toLocaleString("zh-TW");
+  const dataKey = "production-management-data-v3";
+  const historyKey = "production-management-history-v3";
+
+  function todayKey(){
+    const d = new Date();
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  }
+
+  function updateDate(){
+    const d = new Date();
+    $("today").textContent =
+      "日期："+d.getFullYear()+"/"+
+      String(d.getMonth()+1).padStart(2,"0")+"/"+
+      String(d.getDate()).padStart(2,"0");
+  }
+
+  function loadData(){
+    try{
+      return JSON.parse(localStorage.getItem(dataKey) || "{}");
+    }catch(e){ return {}; }
+  }
+
+  function saveData(){
+    try{
+      localStorage.setItem(dataKey, JSON.stringify(rows));
+      return true;
+    }catch(e){ return false; }
+  }
+
+  function loadHistory(){
+    try{
+      return JSON.parse(localStorage.getItem(historyKey) || "{}");
+    }catch(e){ return {}; }
+  }
+
+  function saveHistory(history){
+    try{
+      localStorage.setItem(historyKey, JSON.stringify(history));
+    }catch(e){}
+  }
+
+  let stored = loadData();
+
+  // Initial data only applies when this browser has no existing saved data.
+  if(Object.keys(stored).length === 0){
+    stored = {
+      "OS51B00272": {part:"OS51B00272", total:3114, completed:960, ng:9},
+      "OS51B00273": {part:"OS51B00273", total:2784, completed:1274, ng:105}
+    };
+    try{ localStorage.setItem(dataKey, JSON.stringify(stored)); }catch(e){}
+  }
+
+  let rows = Object.values(stored);
+
+  function getRow(part){
+    return rows.find(x => x.part === part);
+  }
+
+  function preview(){
+    const part = $("part").value.trim();
+    const good = $("good").value === "" ? 0 : Number($("good").value);
+    const ngText = $("ng").value.trim();
+    const ng = ngText === "" ? 0 : Number(ngText);
+    const row = getRow(part);
+
+    if(row){
+      const cumulativeGood = row.completed + good;
+      const cumulativeNg = row.ng + ng;
+      const remaining = Math.max(0, row.total - cumulativeGood - cumulativeNg);
+      const rate = row.total ? Math.min(100, (cumulativeGood+cumulativeNg)/row.total*100) : 0;
+      $("previewGood").textContent = fmt(cumulativeGood);
+      $("previewNg").textContent = fmt(cumulativeNg);
+      $("previewRemain").textContent = fmt(remaining);
+      $("previewRate").textContent = rate.toFixed(1)+"%";
+    }else{
+      $("previewGood").textContent = fmt(good);
+      $("previewNg").textContent = ngText === "" ? "0" : fmt(ng);
+      $("previewRemain").textContent = "需設定總數";
+      $("previewRate").textContent = "—";
+    }
+  }
+
+  function render(){
+    const tbody = $("tbody");
+    tbody.innerHTML = "";
+    $("empty").style.display = rows.length ? "none" : "block";
+
+    rows.forEach((x,i)=>{
+      const remaining = Math.max(0, x.total-x.completed-x.ng);
+      const rate = x.total ? Math.min(100,(x.completed+x.ng)/x.total*100) : 0;
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td><b>"+x.part+"</b></td>"+
+        '<td class="num">'+fmt(x.total)+"</td>"+
+        '<td class="num good">'+fmt(x.completed)+"</td>"+
+        '<td class="num remain">'+fmt(remaining)+"</td>"+
+        '<td class="num ng">'+fmt(x.ng)+"</td>"+
+        '<td><div style="display:flex;align-items:center;gap:7px"><div class="progress"><div class="bar" style="width:'+rate+'%"></div></div><small>'+rate.toFixed(1)+"%</small></div></td>"+
+        '<td><button class="secondary delete" type="button" data-i="'+i+'">刪除</button></td>';
+      tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll(".delete").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        rows.splice(Number(btn.dataset.i),1);
+        saveData();
+        render();
+        $("message").textContent = "已刪除資料。";
+        $("message").style.color = "#555";
+      });
+    });
+  }
+
+  ["part","good","ng"].forEach(id => $(id).addEventListener("input", preview));
+
+  $("form").addEventListener("submit", e=>{
+    e.preventDefault();
+
+    const part = $("part").value.trim();
+    const goodText = $("good").value.trim();
+    const ngText = $("ng").value.trim();
+
+    if(!part || goodText === "" || !Number.isInteger(Number(goodText)) || Number(goodText) < 0 ||
+       (ngText !== "" && (!Number.isInteger(Number(ngText)) || Number(ngText) < 0))){
+      $("message").textContent = "料號與今日良品數必填；NG 可不填。";
+      $("message").style.color = "#c77a00";
+      return;
+    }
+
+    const good = Number(goodText);
+    const ngToAdd = ngText === "" ? 0 : Number(ngText);
+
+    let row = getRow(part);
+
+    // New part: total is set once, then stays fixed unless the user explicitly edits it later.
+    if(!row){
+      const totalText = prompt("第一次建立 "+part+"，請輸入這個料號的總數（之後會固定保存）：");
+      const total = Number(totalText);
+      if(!Number.isInteger(total) || total < good + ngToAdd){
+        $("message").textContent = "總數輸入錯誤，或總數小於今日良品＋NG。";
+        $("message").style.color = "#c77a00";
+        return;
+      }
+      row = {part, total, completed:0, ng:0};
+      rows.push(row);
+    }
+
+    if(row.completed + good + row.ng + ngToAdd > row.total){
+      $("message").textContent = "錯誤：累計已完成＋累計 NG 不能超過固定總數。";
+      $("message").style.color = "#c77a00";
+      return;
+    }
+
+    row.completed += good;
+    // NG is only changed when the user actually enters a number.
+    if(ngText !== "") row.ng += ngToAdd;
+
+    saveData();
+
+    const history = loadHistory();
+    const key = todayKey();
+    if(!history[key]) history[key] = [];
+    history[key].push({
+      time:new Date().toISOString(),
+      part:part,
+      good:good,
+      ng:ngToAdd
+    });
+    saveHistory(history);
+
+    render();
+    $("message").textContent =
+      part+" 已更新：今日良品 +"+fmt(good)+"、今日 NG +"+fmt(ng)+"，資料已自動保存。";
+    $("message").style.color = "#15945b";
+
+    $("form").reset();
+    $("good").value = 0;
+    $("ng").value = "";
+    preview();
+    $("part").focus();
+  });
+
+  $("clear").addEventListener("click",()=>{
+    $("form").reset();
+    $("good").value = 0;
+    $("ng").value = "";
+    preview();
+    $("message").textContent = "";
+    $("part").focus();
+  });
+
+  updateDate();
+  render();
+  preview();
+
+  let currentDay = todayKey();
+  setInterval(()=>{
+    const d = todayKey();
+    if(d !== currentDay){
+      currentDay = d;
+      updateDate();
+      $("form").reset();
+      $("good").value = 0;
+      $("ng").value = "";
+      render();
+      preview();
+      $("message").textContent = "已自動切換到新的一天。";
+      $("message").style.color = "#555";
+    }
+  },60000);
+})();
+</script>
+</body>
+</html>
