@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生產管理表</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f4f6f8;color:#222}
+.container{max-width:900px;margin:auto;padding:18px}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+h1{font-size:24px;margin:0 0 6px}.date{color:#666;font-size:14px}
+.card{background:white;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px #0000000d}
+.form-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:12px}
+label{display:block;font-size:13px;color:#666;margin-bottom:6px}
+input{width:100%;height:46px;border:1px solid #d5d9df;border-radius:9px;padding:0 12px;font-size:16px}
+input:focus{outline:2px solid #9db5ff;border-color:#668cff}
+button{height:44px;border:0;border-radius:9px;padding:0 18px;font-size:15px;font-weight:bold;cursor:pointer}
+.primary{background:#456fe8;color:white}.secondary{background:#eef1f5;color:#333}
+.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.preview{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.preview div{background:#f7f8fa;border-radius:9px;padding:11px}
+.preview span{display:block;color:#777;font-size:12px}.preview b{font-size:20px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:620px}
+th,td{padding:13px 10px;border-bottom:1px solid #e5e7eb;text-align:left}
+th{font-size:13px;color:#666}td{text-align:left}
+.num{text-align:right}
+.good{color:#15945b;font-weight:bold}.ng{color:#d84b4b;font-weight:bold}.remain{font-weight:bold}
+.progress{height:7px;background:#e5e7eb;border-radius:20px;overflow:hidden;min-width:80px}
+.bar{height:100%;background:#456fe8}
+.message{font-size:13px;margin-top:10px;color:#555}
+.empty{text-align:center;color:#888;padding:28px}
+@media(max-width:650px){
+ .container{padding:12px}
+ .form-grid{grid-template-columns:1fr 1fr}
+ .header{align-items:flex-start}
+ h1{font-size:21px}
+}
+@media(max-width:430px){
+ .form-grid{grid-template-columns:1fr}
+ .preview{grid-template-columns:1fr 1fr}
+ .card{padding:14px}
+ button{width:100%}
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>生產管理表</h1>
+      <div class="date" id="today"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">輸入生產資料</h3>
+    <form id="form">
+      <div class="form-grid">
+        <div><label>料號</label><input id="part" required placeholder="例如 OS51B00272"></div>
+        <div><label>總數</label><input id="total" type="number" min="0" step="1" required placeholder="3114"></div>
+        <div><label>已完成（良品數）</label><input id="completed" type="number" min="0" step="1" value="0" required></div>
+        <div><label>NG</label><input id="ng" type="number" min="0" step="1" value="0" required></div>
+      </div>
+
+      <div class="preview">
+        <div><span>剩餘</span><b id="remaining">0</b></div>
+        <div><span>完成率</span><b id="rate">0%</b></div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" type="submit">加入／更新</button>
+        <button class="secondary" type="button" id="clear">清除</button>
+      </div>
+      <div class="message" id="message"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">今日生產狀況</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>料號</th>
+            <th class="num">總數</th>
+            <th class="num">已完成</th>
+            <th class="num">剩餘</th>
+            <th class="num">NG</th>
+            <th>進度</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty">尚未建立資料</div>
+  </div>
+
+  <div class="card" style="font-size:13px;color:#666">
+    <b style="color:#333">自動保存：</b> 每天的資料會依日期保存在這台手機／電腦的瀏覽器中；隔天會自動使用新的日期資料，不會覆蓋前一天。<br><br>
+    <b style="color:#333">計算方式：</b>
+    剩餘 = 總數 − 已完成 − NG
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const fmt = n => Number(n).toLocaleString("zh-TW");
+  const storageKey = "production-management-daily-v1";
+
+  function dateKey(){
+    const d = new Date();
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  }
+
+  function loadRows(){
+    try{
+      const all = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      return Array.isArray(all[dateKey()]) ? all[dateKey()] : [];
+    }catch(e){ return []; }
+  }
+
+  function saveRows(){
+    try{
+      const all = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      all[dateKey()] = rows;
+      localStorage.setItem(storageKey, JSON.stringify(all));
+      return true;
+    }catch(e){ return false; }
+  }
+
+  let rows = loadRows();
+
+  function updateDate(){
+    const d=new Date();
+    $("today").textContent="日期："+d.getFullYear()+"/"+
+      String(d.getMonth()+1).padStart(2,"0")+"/"+
+      String(d.getDate()).padStart(2,"0")+"　（資料會自動保存）";
+  }
+
+  function calculate(){
+    const total=Number($("total").value)||0;
+    const completed=Number($("completed").value)||0;
+    const ng=Number($("ng").value)||0;
+    const remaining=Math.max(0,total-completed-ng);
+    $("remaining").textContent=fmt(remaining);
+    $("rate").textContent=total?Math.min(100,(completed+ng)/total*100).toFixed(1)+"%":"0%";
+  }
+
+  function render(){
+    const tbody=$("tbody");
+    tbody.innerHTML="";
+    $("empty").style.display=rows.length?"none":"block";
+
+    rows.forEach((x,i)=>{
+      const remaining=x.total-x.completed-x.ng;
+      const rate=x.total?Math.min(100,(x.completed+x.ng)/x.total*100):0;
+      const tr=document.createElement("tr");
+      tr.innerHTML=
+        "<td><b>"+x.part+"</b></td>"+
+        '<td class="num">'+fmt(x.total)+"</td>"+
+        '<td class="num good">'+fmt(x.completed)+"</td>"+
+        '<td class="num remain">'+fmt(remaining)+"</td>"+
+        '<td class="num ng">'+fmt(x.ng)+"</td>"+
+        '<td><div style="display:flex;align-items:center;gap:7px"><div class="progress"><div class="bar" style="width:'+rate+'%"></div></div><small>'+rate.toFixed(1)+"%</small></div></td>"+
+        '<td><button class="secondary delete" data-index="'+i+'" type="button">刪除</button></td>';
+      tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll(".delete").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        rows.splice(Number(btn.dataset.index),1);
+        saveRows();
+        render();
+      });
+    });
+  }
+
+  ["total","completed","ng"].forEach(id=>$(id).addEventListener("input",calculate));
+
+  $("form").addEventListener("submit",e=>{
+    e.preventDefault();
+    const part=$("part").value.trim();
+    const total=Number($("total").value);
+    const completed=Number($("completed").value);
+    const ng=Number($("ng").value);
+
+    if(!part || !Number.isInteger(total)||total<0 ||
+       !Number.isInteger(completed)||completed<0 ||
+       !Number.isInteger(ng)||ng<0){
+      $("message").textContent="請確認所有欄位都填寫正確。";
+      return;
+    }
+    if(completed+ng>total){
+      $("message").textContent="錯誤：已完成＋NG不能超過總數。";
+      return;
+    }
+
+    const index=rows.findIndex(x=>x.part===part);
+    if(index>=0) rows[index]={part,total,completed,ng};
+    else rows.push({part,total,completed,ng});
+
+    saveRows();
+    render();
+    $("message").textContent="已成功更新："+part+"（已自動保存）";
+    $("message").style.color="#15945b";
+    $("form").reset();
+    $("completed").value=0;
+    $("ng").value=0;
+    calculate();
+    $("part").focus();
+  });
+
+  $("clear").addEventListener("click",()=>{
+    $("form").reset();
+    $("completed").value=0;
+    $("ng").value=0;
+    calculate();
+    $("message").textContent="";
+    $("part").focus();
+  });
+
+  updateDate();
+  calculate();
+  render();
+
+  // 每分鐘檢查日期，跨日後自動切換到新的一天
+  let currentDateKey = dateKey();
+  setInterval(()=>{
+    const nextKey = dateKey();
+    if(nextKey !== currentDateKey){
+      currentDateKey = nextKey;
+      rows = loadRows();
+      updateDate();
+      calculate();
+      render();
+    }
+  }, 60000);
+})();
+</script>
+</body>
+</html>
